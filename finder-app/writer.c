@@ -18,10 +18,12 @@ int main(int argc, char *argv[])
    
    openlog(NULL,0,LOG_USER);  //open log
    
+   int rc = -1;
+   
    if(argc!=3)
    {
      syslog(LOG_ERR,"Invalid Number of Arguments: %d",argc);   //invalid number of Arguments
-     return 1;
+     rc = 1;
      
    }
    
@@ -33,7 +35,7 @@ int main(int argc, char *argv[])
           if (fd == -1)
           {
             syslog(LOG_ERR,"Error opening: %s",filename);  //file creation unsucessfull 
-            return 1;
+            rc = 1;
           }
           
           else{
@@ -48,13 +50,16 @@ int main(int argc, char *argv[])
                {
           
                   syslog(LOG_ERR,"error writing string to file: %s",filename); //file write unsuccessfull 
-                  return 1;
+                  close(fd);  //close file
+                  rc = 1;
                }
           
               else
               {
           
                   syslog(LOG_DEBUG,"Writing %s to %s",filename,writestr);  //file write sucessfull 
+                  close(fd);  //close file
+                  rc = 0;
                  
               
               }
@@ -65,5 +70,5 @@ int main(int argc, char *argv[])
          }
    
    closelog(); //close log
-   return 0;
+   return rc;
 }
