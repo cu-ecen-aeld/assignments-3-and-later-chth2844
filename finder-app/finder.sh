@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 #finder script
 #Author: Chirayu Thakur
 FILESDIR=$1
