@@ -15,9 +15,23 @@ bool do_system(const char *cmd)
  *  Call the system() function with the command set in the cmd
  *   and return a boolean true if the system() call completed with success 
  *   or false() if it returned a failure
-*/
+*/   
+    int status;
+    
+    status = system(cmd);                        
+    
+    if (! WIFEXITED (status))
+    {
+      return false;  //failure, process did not exit normally 
+    }
+    
+    else if( WEXITSTATUS(status) !=0)
+    {
+      return false;  //failure, command issued returned non zero value
+    }
+    
 
-    return true;
+    return true; //system() call completed with success 
 }
 
 /**
@@ -58,10 +72,46 @@ bool do_exec(int count, ...)
  *   as second argument to the execv() command.
  *   
 */
+  
+    int status;
+    pid_t pid;
+
+    pid = fork();
+    
+    if (pid == -1)
+    {
+       return false;  //failure, fork() system call did not execute with success 
+    }
+    
+    else if (pid == 0)
+    {
+      status = execv(command[0],command); //execute command in child process 
+      exit(-1);
+      
+    }
+    
+    
+    if (waitpid (pid, &status, 0) == -1)
+    {
+        return false;  //failure, process did not exit normally 
+        
+    }
+    
+    
+    else if (WIFEXITED (status))
+    {
+         if(WEXITSTATUS(status) != 0)
+         {
+           return false; //failure, command returned non zero value 
+         }
+         
+    }
+    
+    
 
     va_end(args);
 
-    return true;
+    return true; //system command executed with success 
 }
 
 /**
@@ -92,6 +142,60 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *   
 */
+   
+    int pid,status;
+   
+    int fd = open(outputfile,O_WRONLY|O_TRUNC|O_CREAT, 0644); //open file in write only mode and create it if file does not exist 
+    
+    if (fd == -1) 
+    { 
+     return false;  //failure, unable to open file 
+    
+    }
+    
+    pid = fork();  //create child process 
+    
+    if(pid == -1)
+    {
+      return false; //failure to create child process 
+    }
+    
+    else if( pid == 0)
+    {
+        if (dup2(fd, 1) == -1) 
+         { 
+             
+             return false;   //failure to redirect output of command to specified file 
+         
+         }
+         
+         close(fd);
+         status = execv(command[0],command); //execute command 
+         exit(-1);
+         
+    
+    }
+    
+    
+    
+    if (waitpid (pid, &status, 0) == -1)
+    {
+        return false; //failure, process did not exit normally 
+        
+    }
+    
+    
+    else if (WIFEXITED (status))
+    {
+         if(WEXITSTATUS(status) != 0)
+         {
+           return false; //failure, command returned non zero value 
+         }
+         
+    }
+    
+  
+      
 
     va_end(args);
     
