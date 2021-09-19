@@ -8,5 +8,5 @@ writer.o: writer.c
 
 
 clean:
-        rm -f *.o writer
+	rm -f *.o writer
 
