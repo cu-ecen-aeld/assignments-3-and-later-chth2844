@@ -1,5 +1,6 @@
 //Filename: aesdsocket.c
 //Description: server socket implementation
+//Date: 10/03/2021
 //Author: Chirayu Thakur
 
 #include <sys/wait.h>
@@ -30,12 +31,12 @@
 #define FILE_PERMISSIONS 0644
 
 //global variables
-int socket_fd,client_fd,fd;
+int socket_fd,client_fd,file_fd;
 int total_write_count=0;
 int total_sent_count=0;
 int pid;
 
-
+//signal handler for SIGINT and SIGTERM
 void sig_handler(int signo)
 {
   if(signo == SIGINT || signo == SIGTERM)
@@ -54,7 +55,7 @@ void sig_handler(int signo)
       syslog(LOG_ERR,"Cannot close client socket file descriptor\n");
     }
     
-    if(close(fd) < 0)
+    if(close(file_fd) < 0)
     {
       syslog(LOG_ERR,"Cannot close file descriptor\n");
     } 
@@ -101,7 +102,7 @@ int main(int argc, char *argv[])
    
    
    
-   openlog(NULL,0,LOG_USER);  //open log
+   openlog("aesdsock",LOG_PID,LOG_USER);  //open log
    
    
    if(signal(SIGINT,sig_handler) == SIG_ERR) 
@@ -119,10 +120,11 @@ int main(int argc, char *argv[])
    if((argc == 2) && (strcmp("-d", argv[1]) == 0))
    {
 		
-      isdaemon = 1;
+      isdaemon = 1;          //create daemon
 			
     }
-	
+    
+   //create socket file descriptor
    if((socket_fd = socket(AF_INET,SOCK_STREAM,SOCKET_PROTOCOL))<0)
    {
    
@@ -131,7 +133,8 @@ int main(int argc, char *argv[])
    
    }
    
-   if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(int)) < 0) //resuse socket address 
+   //resuse socket address 
+   if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(int)) < 0) 
    {
         syslog(LOG_ERR, "reuse addreess failed");
         close(socket_fd);
@@ -139,6 +142,7 @@ int main(int argc, char *argv[])
         return rc;
     }
    
+   //getting address 
    if((status = getaddrinfo(NULL,PORT_NO,&hints,&res)) !=0)
    {  
      syslog(LOG_ERR,"getaddrinfo error\n");
@@ -146,12 +150,14 @@ int main(int argc, char *argv[])
    
    }
    
+   //binding address to socket
    if((status = bind(socket_fd,res->ai_addr,sizeof(struct sockaddr))<0))
    { 
      syslog(LOG_ERR,"bind error\n");
      return rc;
    }
    
+   //free addrinfo data structure
    freeaddrinfo(res);
    
    if(isdaemon==1)
@@ -161,20 +167,20 @@ int main(int argc, char *argv[])
        
     	pid = fork();
 
-    	if (pid < 0 )
+    	if (pid < 0 ) //error in fork
     	{
 	    syslog(LOG_ERR, "fork error\n");
 	}
 
-    	if(pid > 0)
+    	if(pid > 0)       //parent process
     	{
 	    syslog(LOG_DEBUG, "daemon created with success\n");
 	    exit(0);
     	}
     	
-    	if(pid == 0)
+    	if(pid == 0)   //child process
     	{
-	    session_id = setsid();
+	    session_id = setsid();  //set session id
 
             if(session_id == -1)
 	    {
@@ -184,7 +190,7 @@ int main(int argc, char *argv[])
 	    	exit(EXIT_FAILURE);
 	    }
 
-            if (chdir("/") == -1)
+            if (chdir("/") == -1)   //change directory
 	    {
             	syslog(LOG_ERR, "chdir error");
             	closelog();
@@ -196,15 +202,16 @@ int main(int argc, char *argv[])
             dup2(devnull_fd, STDIN_FILENO);
             dup2(devnull_fd, STDOUT_FILENO);
             dup2(devnull_fd, STDERR_FILENO);
-
-            close(STDIN_FILENO);
+            
+            //close file descriptors 
+            close(STDIN_FILENO);  
             close(STDOUT_FILENO);
             close(STDERR_FILENO);
     	}
     }
    
    
-   
+   //listen to client connections 
    if((status = listen(socket_fd,LISTEN_BACKLOG))<0)
    {
       syslog(LOG_ERR,"listen error\n");
@@ -213,35 +220,28 @@ int main(int argc, char *argv[])
     
    
     
-    /*if ((sigemptyset(&signmask) == -1) || (sigaddset(&signmask, SIGINT) == -1) || (sigaddset(&signmask, SIGTERM) == -1))
-    {
-       syslog(LOG_ERR,"failed to empty signal set");
-    }*/
-     
-    
     while(1)
     {
        
       
-     fd = open(FILE_PATH,O_RDWR | O_APPEND | O_CREAT, S_IRWXU|S_IRWXG|S_IRWXO);
+     file_fd = open(FILE_PATH,O_RDWR | O_APPEND | O_CREAT,FILE_PERMISSIONS); //open file 
      
      
-     if(fd==-1)
+     if(file_fd==-1)
      {
-     syslog(LOG_ERR,"Cannot open file\n");
-     printf("cannot open file\n");
-     return 0;
+      syslog(LOG_ERR,"Cannot open file\n");
+      return 0;
      
      }
       
-      if((client_fd = accept(socket_fd,(struct sockaddr *)&client_addr,&client_addr_size))<0)
+      if((client_fd = accept(socket_fd,(struct sockaddr *)&client_addr,&client_addr_size))<0)  //accept connection from client socket
       {
         syslog(LOG_ERR,"accept connection failed\n");
         return rc;
       
       }
       
-     if ((client_ip = inet_ntoa(client_addr.sin_addr)) == NULL)
+     if ((client_ip = inet_ntoa(client_addr.sin_addr)) == NULL)    //obtain ip address of client
      {
         syslog(LOG_ERR,"client ip failed\n");
         return rc;
@@ -250,20 +250,13 @@ int main(int argc, char *argv[])
      
      else{
      
-     printf("Accepted connection from %s\n", client_ip);
-     
-     //syslog(LOG_DEBUG,"Accepted connection from %s\n", client_ip);
+     syslog(LOG_DEBUG,"Accepted connection from %s\n", client_ip);
      
      }
      
-     /*if (sigprocmask(SIG_BLOCK, &signmask, NULL) == -1)
-     {
-        syslog(LOG_ERR,"signal block failed\n");
-         return rc;
-     }*/
-     
-     
       read_buff = (char *) malloc(sizeof(char) * BUFFER_LEN);
+      
+      //receive packets from client and write to file 
       
      do{
      
@@ -276,7 +269,7 @@ int main(int argc, char *argv[])
         else
         {
         
-         bytes_write = write(fd,read_buff,bytes_read);
+         bytes_write = write(file_fd,read_buff,bytes_read);
          
          if(bytes_write <0)
          {
@@ -284,7 +277,7 @@ int main(int argc, char *argv[])
            free(write_buff);
            free(read_buff);
            close(socket_fd);
-           close(fd);
+           close(file_fd);
            return rc;
          }
          
@@ -295,69 +288,53 @@ int main(int argc, char *argv[])
      
      }while(strchr(read_buff,'\n') == NULL);
      
-     printf("bytes_read %d\n",bytes_read);
      
      read_buff[total_write_count]='\0';
-         
-    // printf("read_buff: %s\n",read_buff);
-         
-     lseek(fd,0,SEEK_SET);
+              
+     lseek(file_fd,0,SEEK_SET);  //point file_fd to begining of file 
          
      write_buff = (char *) malloc(sizeof(char) *BUFFER_LEN );
          
-         
+     total_sent_count = 0;
+      
+     //send packets back to client socket from file 
+     while(total_sent_count<total_write_count)
+     {   
+          lseek(file_fd,total_sent_count, SEEK_SET);
+          bytes_read = read(file_fd,write_buff,BUFFER_LEN);
        
-       
-       total_sent_count = 0;
-       
-       while(total_sent_count<total_write_count)
-       {   
-            lseek(fd,total_sent_count, SEEK_SET);
-            bytes_read = read(fd,write_buff,BUFFER_LEN);
-       
-            if(bytes_read == -1)
-           {
+          if(bytes_read == -1)
+          {
              syslog(LOG_ERR,"read error\n");
              return rc;
-           }
-           
-           total_sent_count+=bytes_read;
-           
-            if (send(client_fd, write_buff,bytes_read, 0) < 0)
-          {
-            syslog(LOG_ERR,"send error\n");
-            return rc;
           }
            
+         total_sent_count+=bytes_read;
            
+         if (send(client_fd, write_buff,bytes_read, 0) < 0)
+         {
+            syslog(LOG_ERR,"send error\n");
+            return rc;
+         }  
            
        }
        
        
-       free(read_buff);
-       free(write_buff);
-       close(client_fd);
-       close(fd);
+       free(read_buff); //free read buffer
+       free(write_buff); //free write buffer
+       close(client_fd); //close client fd
+       close(file_fd);   //close fd 
          
          
              
        
     }
       
-      
-       /*if (sigprocmask(SIG_UNBLOCK, &signmask, NULL) == -1)
-     {
-       syslog(LOG_ERR,"signal unblock failed\n");
-       return rc;
-     }*/
-      
 
      closelog();
      rc =0;
      
-     return rc;
-         
-         
+     return rc; //exit with success       
          
   }
     
