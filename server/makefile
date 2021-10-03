@@ -1,7 +1,7 @@
 CC = $(CROSS_COMPILE)gcc
 CFLAGS = -Wall -Werror
 
-all: server
+all: aesdsocket
 
 server: aesdsocket.o
 	 $(CC) $(CFLAGS) -o server aesdsocket.o
@@ -10,6 +10,6 @@ aesdsocket.o: aesdsocket.c
 
 clean: 
 	 rm -f  *.o  \
-	        server
+	        aesdsocket
 
 
