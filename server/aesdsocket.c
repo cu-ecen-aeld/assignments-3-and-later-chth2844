@@ -32,9 +32,25 @@
 
 //global variables
 int socket_fd,client_fd,file_fd;
-int total_write_count=0;
-int total_sent_count=0;
+int total_bytes=0;
+int byte_total=0;
+int realloc_val = 1;
 int pid;
+char *read_buff;
+char *write_buff;
+int bytes_read = 0;
+int bytes_write = 0;
+
+//frees memory ,closes files and socket
+void free_memory()
+{
+
+  close(socket_fd);
+  closelog();
+  free(read_buff);
+  free(write_buff);
+
+}
 
 //signal handler for SIGINT and SIGTERM
 void sig_handler(int signo)
@@ -79,19 +95,18 @@ int main(int argc, char *argv[])
 
    int rc=-1;
    int status;
-   char *read_buff;
-   char *write_buff;
-   int bytes_read = 0;
-   int bytes_write = 0;
    int isdaemon=0;
    int reuse_addr =1;
+   int bytes_sent;
+   int buf_loc = 0;
    struct addrinfo hints;
    struct addrinfo *res; //points to result of getaddrinfo
    struct sockaddr_in client_addr;
    socklen_t client_addr_size;
    client_addr_size = sizeof(struct sockaddr_in);
    char *client_ip;
-   //sigset_t signmask;
+   int read_bytes1;
+   
    
    
    
@@ -218,22 +233,25 @@ int main(int argc, char *argv[])
       return rc;
    }
     
-   
+    read_buff = (char *) malloc(sizeof(char) * BUFFER_LEN);
+    write_buff = (char *) malloc(sizeof(char) *BUFFER_LEN );
     
-    while(1)
-    {
-       
-      
-     file_fd = open(FILE_PATH,O_RDWR | O_APPEND | O_CREAT,FILE_PERMISSIONS); //open file 
-     
-     
-     if(file_fd==-1)
+    file_fd = open(FILE_PATH,O_RDWR | O_APPEND | O_CREAT,FILE_PERMISSIONS); //open file 
+   
+    if(file_fd==-1)
      {
       syslog(LOG_ERR,"Cannot open file\n");
       return 0;
      
      }
-      
+     
+     
+   
+    
+    while(1)
+    {
+         
+         
       if((client_fd = accept(socket_fd,(struct sockaddr *)&client_addr,&client_addr_size))<0)  //accept connection from client socket
       {
         syslog(LOG_ERR,"accept connection failed\n");
@@ -254,80 +272,90 @@ int main(int argc, char *argv[])
      
      }
      
-      read_buff = (char *) malloc(sizeof(char) * BUFFER_LEN);
-      
-      //receive packets from client and write to file 
-      
-     do{
+     buf_loc = 0;
      
-         if((bytes_read = recv(client_fd,read_buff,BUFFER_LEN-1,0))<0)
+     //receive packets from client socket
+     
+	do 
+	{
+	    bytes_read = recv(client_fd, read_buff + buf_loc, BUFFER_LEN, 0);
+	    if(bytes_read == -1) 
+	    {  
+	       syslog(LOG_ERR,"recieve error\n");
+               free_memory();
+        	return rc;
+    	    }
+    	    
+	    ++realloc_val;
+	    
+	    buf_loc += bytes_read;
+	    
+            byte_total +=bytes_read;
+            
+            read_buff = (char *)realloc(read_buff, realloc_val*BUFFER_LEN*(sizeof(char))); //reallocate read buffer to make more space 
+            
+	    if(read_buff == NULL)
+	    {
+
+            	syslog(LOG_ERR,"realloc error\n");
+               free_memory();
+               return rc;
+            }
+
+	} while(strchr(read_buff, '\n') == NULL);
+	
+	
+	read_buff[buf_loc] = '\0';
+
+
+      
+        bytes_write = write(file_fd,read_buff, buf_loc); //write bytes to file 
+        
+        if(bytes_write == -1)
         {
-         syslog(LOG_ERR,"recv error\n");
-         return rc;
+            syslog(LOG_ERR,"write error\n");
+            free_memory();
+            return rc;
         }
+
+	
+	write_buff = (char *) realloc(write_buff, byte_total*(sizeof(char))); //reallocate write buffer to make more space
         
-        else
+        if(write_buff == NULL)
         {
-        
-         bytes_write = write(file_fd,read_buff,bytes_read);
-         
-         if(bytes_write <0)
-         {
-           syslog(LOG_ERR,"write error\n");
-           free(write_buff);
-           free(read_buff);
-           close(socket_fd);
-           close(file_fd);
+           syslog(LOG_ERR,"recieve error\n");
+           free_memory();
            return rc;
          }
-         
-         total_write_count +=bytes_read;
-        
-        }
-          
-     
-     }while(strchr(read_buff,'\n') == NULL);
-     
-     
-     read_buff[total_write_count]='\0';
-              
-     lseek(file_fd,0,SEEK_SET);  //point file_fd to begining of file 
-         
-     write_buff = (char *) malloc(sizeof(char) *BUFFER_LEN );
-         
-     total_sent_count = 0;
-      
-     //send packets back to client socket from file 
-     while(total_sent_count<total_write_count)
-     {   
-          lseek(file_fd,total_sent_count, SEEK_SET);
-          bytes_read = read(file_fd,write_buff,BUFFER_LEN);
-       
-          if(bytes_read == -1)
-          {
-             syslog(LOG_ERR,"read error\n");
-             return rc;
-          }
-           
-         total_sent_count+=bytes_read;
-           
-         if (send(client_fd, write_buff,bytes_read, 0) < 0)
-         {
+
+	
+	lseek(file_fd, 0, SEEK_SET);
+	
+	read_bytes1 = read(file_fd,write_buff, byte_total); //read contents from file to write_buffer
+	
+	if(read_bytes1 == -1)
+	{
+	  syslog(LOG_ERR,"read error\n");
+	  free_memory();
+	  return rc;
+	}
+	
+
+        bytes_sent = send(client_fd, write_buff,read_bytes1, 0);  //send packets to client socket
+	
+	if(bytes_sent == -1)
+	{
+
             syslog(LOG_ERR,"send error\n");
+            free_memory();
             return rc;
-         }  
-           
-       }
-       
-       
-       free(read_buff); //free read buffer
-       free(write_buff); //free write buffer
-       close(client_fd); //close client fd
-       close(file_fd);   //close fd 
-         
-         
-             
-       
+	}
+	
+
+	close(client_fd);  //close client file descriptor
+
+	
+    
     }
       
 
@@ -337,4 +365,3 @@ int main(int argc, char *argv[])
      return rc; //exit with success       
          
   }
-    
