@@ -1,15 +1,15 @@
+
 CC = $(CROSS_COMPILE)gcc
-CFLAGS = -Wall -Werror
+CFLAGS = -Wall -Werror 
+LDFLAGS = -lrt -pthread 
 
 all: aesdsocket
 
-server: aesdsocket.o
-	 $(CC) $(CFLAGS) -o server aesdsocket.o
+aesdsocket: aesdsocket.o
+	 $(CC) $(CFLAGS) -o aesdsocket aesdsocket.o $(LDFLAGS)
 aesdsocket.o: aesdsocket.c
-	 $(CC) $(CFLAGS) -c aesdsocket.c
+	 $(CC) $(CFLAGS) -c aesdsocket.c queue.h
 
 clean: 
 	 rm -f  *.o  \
 	        aesdsocket
-
-
