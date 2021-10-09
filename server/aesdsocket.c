@@ -40,17 +40,6 @@ int socket_fd,client_fd,file_fd;
 int pid;
 
 
- static inline void timespec_add( struct timespec *result,
-                        const struct timespec *ts_1, const struct timespec *ts_2)
-{
-    result->tv_sec = ts_1->tv_sec + ts_2->tv_sec;
-    result->tv_nsec = ts_1->tv_nsec + ts_2->tv_nsec;
-    if( result->tv_nsec > 1000000000L ) {
-        result->tv_nsec -= 1000000000L;
-        result->tv_sec ++;
-    }
-    
-    }
 
 
 //thread structure
@@ -90,6 +79,8 @@ static void timer_thread ()
    
    int write_bytes;
    
+   sigset_t mask;
+   
    struct tm *broken_down_time;
    
    time(&rtime);
@@ -101,11 +92,27 @@ static void timer_thread ()
    
    pthread_mutex_lock(&file_mutex);
    
+   // Block signals to avoid partial write
+    if (sigprocmask(SIG_BLOCK,&mask,NULL) == -1)
+    {
+        syslog(LOG_ERR,"signal block failed\n");
+        exit(-1);
+    }
+   
+   
    write_bytes = write(file_fd,buf,size);
     
    if (write_bytes == -1){
         
         printf("error");
+    }
+    
+    
+    // Unblock signals to avoid partial write
+    if (sigprocmask(SIG_UNBLOCK,&mask,NULL) == -1)
+    {
+        syslog(LOG_ERR,"signal unblock failed\n");
+        exit(-1);
     }
 
     
@@ -214,6 +221,8 @@ void packet_transfer(void *threadp)
   
   struct thread_data *threadsock = (struct thread_data*) threadp;
   
+  sigset_t mask;
+  
   
   
   
@@ -266,6 +275,13 @@ void packet_transfer(void *threadp)
 	threadsock->read_buff[buf_loc] = '\0';
 
         pthread_mutex_lock(&file_mutex);
+        
+        // Block signals to avoid partial write
+        if (sigprocmask(SIG_BLOCK,&mask,NULL) == -1)
+        {
+        syslog(LOG_ERR,"signal block error\n");
+        exit(-1);
+        }
       
         bytes_write = write(file_fd,threadsock->read_buff, buf_loc); //write bytes to file 
         
@@ -275,6 +291,14 @@ void packet_transfer(void *threadp)
             free_memory();
            
         }
+        
+        
+         // Unblock signals to avoid partial write
+    if (sigprocmask(SIG_UNBLOCK,&mask,NULL) == -1)
+    {
+        syslog(LOG_ERR,"signal unblock failed\n");
+        exit(-1);
+    }
 
 	
 	threadsock->write_buff = (char *) realloc(threadsock->write_buff, byte_total*(sizeof(char))); //reallocate write buffer to make more space
@@ -333,13 +357,14 @@ int main(int argc, char *argv[])
    char *client_ip;
    timer_t timerid;
    struct itimerspec result;
-   struct timespec ts2;
    int ret;
    
    openlog("aesdsock",LOG_PID,LOG_USER);  //open log
    
-   result.it_interval.tv_sec = 9;
-   result.it_interval.tv_nsec = 1;
+   result.it_interval.tv_sec = 10;
+   result.it_interval.tv_nsec = 0;
+   result.it_value.tv_sec = 10;
+   result.it_value.tv_nsec = 0;
    
    
    struct sigevent sev;
@@ -348,7 +373,7 @@ int main(int argc, char *argv[])
    
    memset(&sev,0,sizeof(struct sigevent));
    
-  // int read_bytes1;
+  
    
    //setup call to timer_thread
    
@@ -362,11 +387,11 @@ int main(int argc, char *argv[])
       return rc;
    }
    
-   clock_gettime(clock_id,&ts2);
    
-   timespec_add(&result.it_value,&ts2,&result.it_interval);
    
-   ret = timer_settime(timerid,TIMER_ABSTIME, &result, NULL);
+   
+   
+   ret = timer_settime(timerid,0, &result, NULL);
    
    if(ret)
    {
@@ -490,6 +515,16 @@ int main(int argc, char *argv[])
             close(STDERR_FILENO);
     	}
     }
+    
+    
+    
+    // Setup signal mask
+    sigset_t set;
+    sigemptyset(&set);           // empty the set
+
+    // add the signals to the set
+    sigaddset(&set,SIGINT);      
+    sigaddset(&set,SIGTERM);     
    
    
    //listen to client connections 
