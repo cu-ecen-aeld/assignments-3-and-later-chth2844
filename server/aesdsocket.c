@@ -36,8 +36,9 @@
 #define FILE_PERMISSIONS 0644
 
 //global variables
-int socket_fd,client_fd,file_fd;
-int pid;
+int file_fd;
+int socket_fd,client_fd;
+
 
 
 
@@ -70,7 +71,7 @@ SLIST_HEAD(slisthead, slist_data_s) head;
 
 pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-static void timer_thread ()
+static void timer_thread (union sigval arg)
 {
    char buf[100];
    
@@ -86,7 +87,7 @@ static void timer_thread ()
    time(&rtime);
    broken_down_time = localtime(&rtime);
    
-   size_t size;
+   int size=0;
    
    size = strftime(buf,100,"timestamp:%a, %d %b %Y %T %z\n",broken_down_time);
    
@@ -107,6 +108,7 @@ static void timer_thread ()
         printf("error");
     }
     
+    syslog(LOG_DEBUG,"timer write complete\n");
     
     // Unblock signals to avoid partial write
     if (sigprocmask(SIG_UNBLOCK,&mask,NULL) == -1)
@@ -355,51 +357,16 @@ int main(int argc, char *argv[])
    socklen_t client_addr_size;
    client_addr_size = sizeof(struct sockaddr_in);
    char *client_ip;
-   timer_t timerid;
+   timer_t timer_id;
    struct itimerspec result;
    int ret;
+   int pid;
+   
+   SLIST_INIT(&head);
+   
    
    openlog("aesdsock",LOG_PID,LOG_USER);  //open log
    
-   result.it_interval.tv_sec = 10;
-   result.it_interval.tv_nsec = 0;
-   result.it_value.tv_sec = 10;
-   result.it_value.tv_nsec = 0;
-   
-   
-   struct sigevent sev;
-   
-   int clock_id = CLOCK_MONOTONIC;
-   
-   memset(&sev,0,sizeof(struct sigevent));
-   
-  
-   
-   //setup call to timer_thread
-   
-   sev.sigev_notify = SIGEV_THREAD;
-   sev.sigev_notify_function = timer_thread;
-   
-   if(timer_create(clock_id,&sev,&timerid) !=0)
-   {
-      syslog(LOG_ERR,"Cannot create timer!\n");
-      printf("Cannot create timer!");
-      return rc;
-   }
-   
-   
-   
-   
-   
-   ret = timer_settime(timerid,0, &result, NULL);
-   
-   if(ret)
-   {
-     syslog(LOG_ERR,"Error in setting timer!\n");
-     printf("error in setting timer!");
-     return rc;
-   
-   }
    
    memset(&hints,0,sizeof(hints)); //make sure struct is empty
    hints.ai_family = AF_INET; // don't care IPV4, IPV6
@@ -466,6 +433,33 @@ int main(int argc, char *argv[])
    //free addrinfo data structure
    freeaddrinfo(res);
    
+   // Setup signal mask
+    sigset_t set;
+    sigemptyset(&set);           // empty the set
+
+    // add the signals to the set
+    sigaddset(&set,SIGINT);      
+    sigaddset(&set,SIGTERM);     
+   
+   
+   //listen to client connections 
+   if((status = listen(socket_fd,LISTEN_BACKLOG))<0)
+   {
+      syslog(LOG_ERR,"listen error\n");
+      return rc;
+   }
+    
+    
+    
+    file_fd = open(FILE_PATH,O_RDWR | O_APPEND | O_CREAT,FILE_PERMISSIONS); //open file 
+   
+    if(file_fd==-1)
+     {
+      syslog(LOG_ERR,"Cannot open file\n");
+      return 0;
+     
+     }
+   
    if(isdaemon==1)
     {  
        int devnull_fd;
@@ -518,34 +512,50 @@ int main(int argc, char *argv[])
     
     
     
-    // Setup signal mask
-    sigset_t set;
-    sigemptyset(&set);           // empty the set
-
-    // add the signals to the set
-    sigaddset(&set,SIGINT);      
-    sigaddset(&set,SIGTERM);     
+     
+   result.it_interval.tv_sec = 10;
+   result.it_interval.tv_nsec = 0;
+   result.it_value.tv_sec = result.it_interval.tv_sec ;
+   result.it_value.tv_nsec = result.it_interval.tv_nsec;
    
    
-   //listen to client connections 
-   if((status = listen(socket_fd,LISTEN_BACKLOG))<0)
+   struct sigevent sev;
+   
+   int clock_id = CLOCK_MONOTONIC;
+   
+   memset(&sev,0,sizeof(struct sigevent));
+   
+  
+   
+   //setup call to timer_thread
+   
+   sev.sigev_notify = SIGEV_THREAD;
+   sev.sigev_value.sival_ptr= &timer_id;
+   sev.sigev_notify_function = timer_thread;
+   sev.sigev_notify_attributes = NULL;
+   
+   ret = timer_create(clock_id,&sev,&timer_id);
+   
+   if(ret !=0)
    {
-      syslog(LOG_ERR,"listen error\n");
+      syslog(LOG_ERR,"Cannot create timer!\n");
+      printf("Cannot create timer!");
       return rc;
    }
-    
-    
-    
-    file_fd = open(FILE_PATH,O_RDWR | O_APPEND | O_CREAT,FILE_PERMISSIONS); //open file 
    
-    if(file_fd==-1)
-     {
-      syslog(LOG_ERR,"Cannot open file\n");
-      return 0;
-     
-     }
-     
-     
+   
+   
+   
+   
+   ret = timer_settime(timer_id,0,&result, NULL);
+   
+   if(ret==-1)
+   {
+     syslog(LOG_ERR,"Error in setting timer!\n");
+     printf("error in setting timer!");
+     return rc;
+   
+   }
    
     
     while(1)
