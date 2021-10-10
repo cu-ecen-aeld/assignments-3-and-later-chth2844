@@ -1,6 +1,6 @@
 //Filename: aesdsocket.c
-//Description: server socket implementation
-//Date: 10/03/2021
+//Description: server socket implementation with pthreads 
+//Date: 10/10/2021
 //Author: Chirayu Thakur
 //Reference: https://github.com/cu-ecen-aeld/aesd-lectures/blob/master/lecture9/timer_thread.c
 
@@ -24,7 +24,7 @@
 #include <arpa/inet.h>
 #include <ctype.h>
 #include <stdbool.h>
-#include<time.h>
+#include <time.h>
 #include "queue.h"
 
 //#defines
@@ -33,14 +33,15 @@
 #define LISTEN_BACKLOG 5
 #define BUFFER_LEN 1000
 #define FILE_PATH "/var/tmp/aesdsocketdata"
-#define FILE_PERMISSIONS 0644
+#define FILE_PERMISSIONS 0666
+#define TIMER_INTERVAL_S 10
+#define TIMER_INTERVAL_NS 10
 
 //global variables
-int file_fd;
-int socket_fd,client_fd;
-
-
-
+int file_fd=0;
+int socket_fd=0,client_fd=0;
+int terminate=0;
+timer_t timer_id;
 
 
 //thread structure
@@ -67,10 +68,11 @@ struct slist_data_s {
 
 slist_data_t *datap=NULL;
 SLIST_HEAD(slisthead, slist_data_s) head;
-//SLIST_INIT(&head);
 
+//initialize mutex
 pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+//timer_thread timestamp function
 static void timer_thread (union sigval arg)
 {
    char buf[100];
@@ -82,6 +84,8 @@ static void timer_thread (union sigval arg)
    
    sigset_t mask;
    
+   memset(&mask,0,sizeof(sigset_t));
+   
    struct tm *broken_down_time;
    
    time(&rtime);
@@ -91,6 +95,8 @@ static void timer_thread (union sigval arg)
    
    size = strftime(buf,100,"timestamp:%a, %d %b %Y %T %z\n",broken_down_time);
    
+   
+   //lock mutex to avoid race condition
    pthread_mutex_lock(&file_mutex);
    
    // Block signals to avoid partial write
@@ -101,14 +107,15 @@ static void timer_thread (union sigval arg)
     }
    
    
-   write_bytes = write(file_fd,buf,size);
+   write_bytes = write(file_fd,buf,size);  //write timestamp to file 
     
    if (write_bytes == -1){
         
-        printf("error");
+        syslog(LOG_ERR,"write failed\n");
+        exit(-1);
     }
     
-    syslog(LOG_DEBUG,"timer write complete\n");
+   
     
     // Unblock signals to avoid partial write
     if (sigprocmask(SIG_UNBLOCK,&mask,NULL) == -1)
@@ -118,7 +125,7 @@ static void timer_thread (union sigval arg)
     }
 
     
-
+   //unlock mutex 
    pthread_mutex_unlock(&file_mutex);
     
    
@@ -127,7 +134,8 @@ static void timer_thread (union sigval arg)
    
 }
 
-//frees memory ,closes files and socket
+//frees memory ,closes files and frees linked list 
+
 void free_memory()
 {
    //close server socket
@@ -142,35 +150,52 @@ void free_memory()
       syslog(LOG_ERR,"Cannot remove file\n");
     }
     
- 
-  
-   // Cancel threads, free assicociated pointers
-    SLIST_FOREACH(datap,&head,entries){
+  // Cancel threads, free assicociated pointers
+  SLIST_FOREACH(datap,&head,entries)
+  {
 
-        if (datap->thread_param.thread_complete != true){
+        if (datap->thread_param.thread_complete != true)
+        {
 
-            
+            pthread_cancel(datap->thread_param.thr);
             free(datap->thread_param.write_buff);
             free(datap->thread_param.read_buff);
             close(datap->thread_param.client_fd);
-            pthread_cancel(datap->thread_param.thr);
+           
             
             
             
         }
 
 
-    }
+   }
     
+  //delete timer
+  timer_delete(timer_id);
     
-     closelog();
+  // free Linked list
+  while(!SLIST_EMPTY(&head))
+  {
+       datap = SLIST_FIRST(&head);
+       SLIST_REMOVE_HEAD(&head,entries);
+       free(datap);
+  }
+
+    
+  terminate=1;
+    
+  //close log
+  closelog();
 
   
 }
 
 //signal handler for SIGINT and SIGTERM
 void sig_handler(int signo)
-{
+{ 
+
+  terminate = 1;
+  
   if(signo == SIGINT || signo == SIGTERM)
   { 
     
@@ -189,166 +214,204 @@ void sig_handler(int signo)
       syslog(LOG_ERR,"Cannot remove file\n");
     }
     
-     // Cancel threads, free assicociated pointers
-    SLIST_FOREACH(datap,&head,entries){
-
-        if (datap->thread_param.thread_complete != true){
-
-            free(datap->thread_param.write_buff);
-            free(datap->thread_param.read_buff);
-            close(datap->thread_param.client_fd);
-            pthread_cancel(datap->thread_param.thr);
-            
-            
-            
-            
-        }
-    
-    closelog();
-    
-    
-    exit(0);
-    
-    }
+   
     
   }
 
 }
 
+//packet transfer function 
 void packet_transfer(void *threadp)
 {
 
-  
- 
-  
-  struct thread_data *threadsock = (struct thread_data*) threadp;
-  
-  sigset_t mask;
-  
-  
-  
-  
-  int bytes_read,bytes_write,bytes_sent,read_bytes1;
-  
-  int buf_loc;
-  
- 
-  static int byte_total=0;
-  int realloc_val = 1;
-  
-  threadsock->read_buff = (char *) malloc(sizeof(char) * BUFFER_LEN);
-  threadsock->write_buff = (char *) malloc(sizeof(char) * BUFFER_LEN);
-  
-  
-  
-  buf_loc = 0;
-     
-     //receive packets from client socket
-     
-	do 
-	{
-	    bytes_read = recv(threadsock->client_fd, threadsock->read_buff + buf_loc, BUFFER_LEN, 0);
-	    if(bytes_read == -1) 
-	    {  
-	       syslog(LOG_ERR,"recieve error\n");
-               free_memory();
-        	
-    	    }
-    	    
-	    ++realloc_val;
-	    
-	    buf_loc += bytes_read;
-	    
-            byte_total +=bytes_read;
-            
-            threadsock->read_buff = (char *)realloc(threadsock->read_buff, realloc_val*BUFFER_LEN*(sizeof(char))); //reallocate read buffer to make more space 
-            
-	    if(threadsock->read_buff == NULL)
-	    {
+    struct thread_data *threadsock = (struct thread_data*) threadp;
+    
+    sigset_t mask;
+    
+    //clear mask to default value
+    memset(&mask,0,sizeof(sigset_t));
+    
+    char *buf;
 
-            	syslog(LOG_ERR,"realloc error\n");
-               free_memory();
-               
-            }
+    int buff_loc=0;
 
-	} while(strchr(threadsock->read_buff, '\n') == NULL);
-	
-	
-	threadsock->read_buff[buf_loc] = '\0';
+    ssize_t read_bytes;
 
-        pthread_mutex_lock(&file_mutex);
-        
-        // Block signals to avoid partial write
-        if (sigprocmask(SIG_BLOCK,&mask,NULL) == -1)
-        {
-        syslog(LOG_ERR,"signal block error\n");
-        exit(-1);
-        }
-      
-        bytes_write = write(file_fd,threadsock->read_buff, buf_loc); //write bytes to file 
-        
-        if(bytes_write == -1)
-        {
-            syslog(LOG_ERR,"write error\n");
-            free_memory();
-           
-        }
-        
-        
-         // Unblock signals to avoid partial write
-    if (sigprocmask(SIG_UNBLOCK,&mask,NULL) == -1)
+    int curr_size=BUFFER_LEN ;
+  
+    int num_bytes,write_bytes;
+    
+    char single_byte;
+    
+    int read_pos = 0;
+    
+    int outbuf_size = BUFFER_LEN;
+    
+    int read_offset=0;
+    
+    //dynamically allocate memory to read and write buffer
+    threadsock->read_buff = (char*)malloc(sizeof(char)*BUFFER_LEN);
+    threadsock->write_buff = (char*)malloc(sizeof(char)*BUFFER_LEN);
+
+    //receive packets from client 
+    while((num_bytes = recv(threadsock->client_fd,threadsock->read_buff+buff_loc, BUFFER_LEN, 0))>0)
     {
-        syslog(LOG_ERR,"signal unblock failed\n");
+        
+        
+        if(num_bytes == -1)
+        {
+          
+          syslog(LOG_ERR,"recieve error\n");
+          free_memory();
+          exit(-1);
+        
+        }
+
+        buff_loc += num_bytes;
+        
+        // dynamicall increase buffer size for incoming packets
+        if (buff_loc >= curr_size){
+
+        curr_size+=BUFFER_LEN;
+
+        threadsock->read_buff = realloc(threadsock->read_buff,sizeof(char)*curr_size);
+
+        }
+        // Search for NULL character
+        buf = strchr(threadsock->read_buff,'\n');
+
+        if(buf != NULL) break;
+        
+      }
+   
+
+
+    // mutex lock
+    pthread_mutex_lock(&file_mutex);
+
+    // Block signals to avoid partial write to file 
+    if (sigprocmask(SIG_BLOCK,&mask,NULL) == -1)
+    {
+        syslog(LOG_ERR,"signal block failed\n");
+        free_memory();
         exit(-1);
     }
 
-	
-	threadsock->write_buff = (char *) realloc(threadsock->write_buff, byte_total*(sizeof(char))); //reallocate write buffer to make more space
-        
-        if(threadsock->write_buff == NULL)
+    // file write 
+    write_bytes = write(file_fd,threadsock->read_buff,buff_loc);
+    if (write_bytes == -1)
+    {
+        syslog(LOG_ERR,"write failed\n");
+        free_memory();
+        exit(-1);
+    }
+
+    // Unblock signals after write
+    if (sigprocmask(SIG_UNBLOCK,&mask,NULL) == -1)
+    {
+        syslog(LOG_ERR,"signal unblock failed\n");
+        free_memory();
+        exit(-1);
+    }
+
+    //mutex unlock
+    pthread_mutex_unlock(&file_mutex);
+
+
+    //point to begining of file 
+    lseek(file_fd,0,SEEK_SET);
+
+   
+
+    // Block signals to avoid partial read from file 
+    if (sigprocmask(SIG_BLOCK,&mask,NULL) == -1)
+    {
+        syslog(LOG_ERR,"signal block failed\n");
+        free_memory();
+        exit(-1);
+    }
+
+    // mutex lock
+    pthread_mutex_lock(&file_mutex);
+
+    
+    // read from file 
+    while((read_bytes = read(file_fd,&single_byte,1)) > 0)
+    {
+
+        if(read_bytes <0 ) 
         {
-           syslog(LOG_ERR,"recieve error\n");
-           free_memory();
-           
-         }
 
-	
-	lseek(file_fd, 0, SEEK_SET);
-	
-	read_bytes1 = read(file_fd,threadsock->write_buff, byte_total); //read contents from file to write_buffer
-	
-	if(read_bytes1 == -1)
-	{
-	  syslog(LOG_ERR,"read error\n");
-	  free_memory();
-	}
-	
-	pthread_mutex_unlock(&file_mutex);
+             syslog(LOG_ERR,"read failed\n");
+             free_memory();
+             exit(-1);
 
-        bytes_sent = send(threadsock->client_fd, threadsock->write_buff,read_bytes1, 0);  //send packets to client socket
-	
-	if(bytes_sent == -1)
-	{
+        }
 
-            syslog(LOG_ERR,"send error\n");
-            free_memory();
-	}
-	
+       threadsock->write_buff[read_pos] = single_byte;
 
-	close(threadsock->client_fd);  //close client file descriptor
-	threadsock->thread_complete= true;
-	free(threadsock->read_buff);
-	free(threadsock->write_buff);
-	
-  
-  
-  
+        if(threadsock->write_buff[read_pos] == '\n')
+        {
+
+            
+            int packet_size = read_pos - read_offset + 1;
+            
+            // Send packets to client 
+            if (send(threadsock->client_fd,threadsock->write_buff+read_offset,packet_size, 0) == -1)
+            { 
+                syslog(LOG_ERR,"read failed\n");
+                free_memory();
+                exit(-1);
+            }
+
+            read_offset = read_pos + 1;
+
+        }
+
+        read_pos++;
+        
+        //reallocate buffer if more memory is required 
+        if(read_pos >= outbuf_size)
+        {
+            
+            outbuf_size += BUFFER_LEN;
+            threadsock->write_buff=realloc(threadsock->write_buff,sizeof(char)*outbuf_size);
+
+        }
+
+
+    }
+
+    // Unblock signals after read and send
+    if (sigprocmask(SIG_UNBLOCK,&mask,NULL) == -1)
+    {
+        syslog(LOG_ERR,"signal unblock failed\n");
+        free_memory();
+        exit(-1);
+    }
+
+    //unlock mutex
+    pthread_mutex_unlock(&file_mutex);
+
+    //close client file descriptor 
+    close(threadsock->client_fd);
+
+    //thread complete
+    threadsock->thread_complete = true;
+    
+    //free dynamically allocated memory 
+    free(threadsock->read_buff);
+    free(threadsock->write_buff);
 }
+	
+  
+  
+ 
 int main(int argc, char *argv[])
 {  
 
    int rc=-1;
-   int status;
+   int status=-1;
    int isdaemon=0;
    int reuse_addr =1;
    struct addrinfo hints;
@@ -357,26 +420,21 @@ int main(int argc, char *argv[])
    socklen_t client_addr_size;
    client_addr_size = sizeof(struct sockaddr_in);
    char *client_ip;
-   timer_t timer_id;
+   //timer_t timer_id;
    struct itimerspec result;
-   int ret;
-   int pid;
+   int ret=0;
+   int pid=0;
    
-   SLIST_INIT(&head);
+   SLIST_INIT(&head); //initialize linked list 
    
    
-   openlog("aesdsock",LOG_PID,LOG_USER);  //open log
+   openlog("aesdsocket.c",LOG_PID,LOG_USER);  //open log
    
    
    memset(&hints,0,sizeof(hints)); //make sure struct is empty
    hints.ai_family = AF_INET; // don't care IPV4, IPV6
    hints.ai_socktype = SOCK_STREAM; //TCP stream sockets
    hints.ai_flags = AI_PASSIVE; //fill in IP for me 
-   
-   
-   
-   
-   
    
    if(signal(SIGINT,sig_handler) == SIG_ERR) 
    {
@@ -451,14 +509,14 @@ int main(int argc, char *argv[])
     
     
     
-    file_fd = open(FILE_PATH,O_RDWR | O_APPEND | O_CREAT,FILE_PERMISSIONS); //open file 
+   file_fd = open(FILE_PATH,O_RDWR | O_APPEND | O_CREAT,FILE_PERMISSIONS); //open file 
    
-    if(file_fd==-1)
-     {
+   if(file_fd==-1)
+   {
       syslog(LOG_ERR,"Cannot open file\n");
-      return 0;
+      return rc;
      
-     }
+   }
    
    if(isdaemon==1)
     {  
@@ -511,30 +569,26 @@ int main(int argc, char *argv[])
     }
     
     
-    
+   //setting up call to timer_thread function 
      
-   result.it_interval.tv_sec = 10;
-   result.it_interval.tv_nsec = 0;
-   result.it_value.tv_sec = result.it_interval.tv_sec ;
-   result.it_value.tv_nsec = result.it_interval.tv_nsec;
+   result.it_interval.tv_sec = TIMER_INTERVAL_S;
+   result.it_interval.tv_nsec =TIMER_INTERVAL_NS;
+   result.it_value.tv_sec = TIMER_INTERVAL_S ;
+   result.it_value.tv_nsec = TIMER_INTERVAL_NS;
    
    
    struct sigevent sev;
    
-   int clock_id = CLOCK_MONOTONIC;
+   int clock_id = CLOCK_MONOTONIC; //use relative time 
    
    memset(&sev,0,sizeof(struct sigevent));
-   
-  
-   
-   //setup call to timer_thread
    
    sev.sigev_notify = SIGEV_THREAD;
    sev.sigev_value.sival_ptr= &timer_id;
    sev.sigev_notify_function = timer_thread;
    sev.sigev_notify_attributes = NULL;
    
-   ret = timer_create(clock_id,&sev,&timer_id);
+   ret = timer_create(clock_id,&sev,&timer_id); //create timer
    
    if(ret !=0)
    {
@@ -544,10 +598,7 @@ int main(int argc, char *argv[])
    }
    
    
-   
-   
-   
-   ret = timer_settime(timer_id,0,&result, NULL);
+   ret = timer_settime(timer_id,0,&result, NULL); //set timer 
    
    if(ret==-1)
    {
@@ -558,8 +609,8 @@ int main(int argc, char *argv[])
    }
    
     
-    while(1)
-    {
+   while(terminate!=1)
+   {
          
          
       if((client_fd = accept(socket_fd,(struct sockaddr *)&client_addr,&client_addr_size))<0)  //accept connection from client socket
@@ -582,23 +633,32 @@ int main(int argc, char *argv[])
      
      }
      
-     
-    datap = malloc(sizeof(slist_data_t));
+    //add new element to linked list 
+    datap = (slist_data_t*) malloc(sizeof(slist_data_t));
     SLIST_INSERT_HEAD(&head,datap,entries);
+    
+    //insert thread data 
     datap->thread_param.client_fd = client_fd;
-    pthread_create(&(datap->thread_param.thr),(void*)0,(void*)&packet_transfer,(void*)&(datap->thread_param));
+    datap->thread_param.thread_complete = false; 
+    
+    //create thread
+    pthread_create(&(datap->thread_param.thr),(void*)0,(void*)&packet_transfer,(void*)&(datap->thread_param)); 
+    
+    //iterate through each entry in linked list 
+    SLIST_FOREACH(datap,&head,entries)
+    {
 
-    SLIST_FOREACH(datap,&head,entries){
+        if(datap->thread_param.thread_complete == false)
+        {
 
-        if(datap->thread_param.thread_complete == false){
-
-            continue;
+            continue; //thread not yet complete so continue 
 
         }
 
-        else if (datap->thread_param.thread_complete == true){
+        else if (datap->thread_param.thread_complete == true)
+        {
 
-            pthread_join(datap->thread_param.thr,NULL);
+            pthread_join(datap->thread_param.thr,NULL); //wait for thread to terminate after thread completes 
 
         }
 
@@ -611,7 +671,7 @@ int main(int argc, char *argv[])
     }
       
 
-     closelog();
+     closelog(); //close log 
      rc =0;
      
      return rc; //exit with success       
