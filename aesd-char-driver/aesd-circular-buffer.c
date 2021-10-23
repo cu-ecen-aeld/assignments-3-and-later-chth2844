@@ -31,8 +31,48 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 {
     /**
     * TODO: implement per description
-    */
-    return NULL;
+      */
+      
+   if(buffer == NULL || entry_offset_byte_rtn == NULL)  //check for NULL pointer 
+   {
+        return NULL;
+   }
+    
+   if((buffer->full==false) && (buffer->in_offs==buffer->out_offs))  //check if circular buffer is empty 
+    {
+      return NULL;
+    }
+   
+   size_t read_pos = buffer->out_offs;
+   size_t total_size=0;
+   size_t prev_size;
+    
+    
+    do {     
+          
+          prev_size = total_size;
+          total_size += buffer->entry[read_pos].size;
+          
+          
+          if( char_offset < total_size)
+          {
+            *entry_offset_byte_rtn = char_offset - prev_size; //position of character wrt buffer entry
+             
+             return &buffer->entry[read_pos];	 //return buffer entry corresponding to offset character
+          
+          }
+          
+          read_pos++;
+          
+          if(read_pos == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) //reached last element of circular buffer
+          {
+             read_pos = 0;  //read first element of circular buffer
+          }    
+    
+    }while(read_pos != buffer->in_offs); //loop until entire buffer is searched 
+    
+    return NULL;   
+
 }
 
 /**
@@ -47,6 +87,44 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
     /**
     * TODO: implement per description 
     */
+    
+    if(buffer == NULL || add_entry->buffptr == NULL || add_entry->size == 0) //check for null pointer and size of 0 
+    {
+       return;
+    }
+    
+    buffer->entry[buffer->in_offs] = *add_entry;  
+    
+    buffer->in_offs++;
+   
+    if(buffer->in_offs == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) //reached last element of circular buffer 
+    {
+      buffer->in_offs = 0;  //write to first element of circular buffer next 
+    }
+    
+    if(buffer->full == true)
+    {
+       buffer->out_offs ++;
+       
+       if(buffer->out_offs == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) //reached last element of circular buffer 
+       {
+         buffer->out_offs = 0; //read first element of circular buffer to make space for new entry 
+       }
+    }
+    
+    if(buffer->in_offs == buffer->out_offs)
+    {
+      buffer->full = true; //buffer is full 
+    }
+    
+    else 
+    {
+    
+        buffer->full = false;
+    }
+    
+   
+    
 }
 
 /**
