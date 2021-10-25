@@ -10,6 +10,7 @@
 
 #ifdef __KERNEL__
 #include <linux/string.h>
+#include <linux/slab.h> //kfree
 #else
 #include <string.h>
 #endif
@@ -33,6 +34,10 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     * TODO: implement per description
       */
       
+    size_t read_pos;
+    size_t total_size;
+    size_t prev_size;
+   
    if(buffer == NULL || entry_offset_byte_rtn == NULL)  //check for NULL pointer 
    {
         return NULL;
@@ -42,10 +47,13 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     {
       return NULL;
     }
+    
    
-   size_t read_pos = buffer->out_offs;
-   size_t total_size=0;
-   size_t prev_size;
+   
+   
+   read_pos = buffer->out_offs;
+   total_size = 0;
+  
     
     
     do {     
@@ -71,7 +79,7 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
     
     }while(read_pos != buffer->in_offs); //loop until entire buffer is searched 
     
-    return NULL;   
+     return NULL; 
 
 }
 
@@ -82,16 +90,26 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 * Any necessary locking must be handled by the caller
 * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+const char *aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
     /**
     * TODO: implement per description 
     */
     
-    if(buffer == NULL || add_entry->buffptr == NULL || add_entry->size == 0) //check for null pointer and size of 0 
-    {
-       return;
-    }
+    const char *release_buffptr;
+    
+    release_buffptr = NULL;
+    
+   // if(buffer == NULL || add_entry->buffptr == NULL || add_entry->size == 0) //check for null pointer and size of 0 
+   // {
+    //   return NULL;
+   // }
+    
+    
+    if(buffer->full==true)
+   {
+     release_buffptr=buffer->entry[buffer->in_offs].buffptr;
+   }
     
     buffer->entry[buffer->in_offs] = *add_entry;  
     
@@ -123,6 +141,7 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
         buffer->full = false;
     }
     
+    return release_buffptr; 
    
     
 }
@@ -133,4 +152,34 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
 void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 {
     memset(buffer,0,sizeof(struct aesd_circular_buffer));
+}
+
+/**
+* releases memory for each element in circular @param buffer 
+*/
+void aesd_circular_buffer_release(struct aesd_circular_buffer *buffer)
+{
+	
+	struct aesd_buffer_entry *element;
+	uint8_t index;
+
+
+	AESD_CIRCULAR_BUFFER_FOREACH(element,buffer,index) 
+	{
+
+		if (element->buffptr != NULL)
+		{
+
+#ifndef __KERNEL__
+		
+		free(element->buffptr);	
+#else
+		kfree(element->buffptr);
+		}
+#endif
+
+	}
+	
+    buffer->in_offs =0 ;
+    buffer->out_offs=0;
 }

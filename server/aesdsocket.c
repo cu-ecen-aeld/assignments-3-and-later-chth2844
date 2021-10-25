@@ -27,12 +27,21 @@
 #include <time.h>
 #include "queue.h"
 
+#define CHAR_DEVICE 1
+
 //#defines
 #define PORT_NO "9000"
 #define SOCKET_PROTOCOL 0
 #define LISTEN_BACKLOG 5
 #define BUFFER_LEN 1000
-#define FILE_PATH "/var/tmp/aesdsocketdata"
+#ifdef CHAR_DEVICE
+       #define  FILE_PATH "/dev/aesdchar"
+#else
+       
+       #define FILE_PATH "/var/tmp/aesdsocketdata"
+       
+#endif
+
 #define FILE_PERMISSIONS 0666
 #define TIMER_INTERVAL_S 10
 #define TIMER_INTERVAL_NS 10
@@ -41,7 +50,7 @@
 int file_fd=0;
 int socket_fd=0,client_fd=0;
 int terminate=0;
-timer_t timer_id;
+//timer_t timer_id;
 
 
 //thread structure
@@ -72,83 +81,28 @@ SLIST_HEAD(slisthead, slist_data_s) head;
 //initialize mutex
 pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-//timer_thread timestamp function
-static void timer_thread (union sigval arg)
-{
-   char buf[100];
-   
-   
-   time_t rtime;
-   
-   int write_bytes;
-   
-   sigset_t mask;
-   
-   memset(&mask,0,sizeof(sigset_t));
-   
-   struct tm *broken_down_time;
-   
-   time(&rtime);
-   broken_down_time = localtime(&rtime);
-   
-   int size=0;
-   
-   size = strftime(buf,100,"timestamp:%a, %d %b %Y %T %z\n",broken_down_time);
-   
-   
-   //lock mutex to avoid race condition
-   pthread_mutex_lock(&file_mutex);
-   
-   // Block signals to avoid partial write
-    if (sigprocmask(SIG_BLOCK,&mask,NULL) == -1)
-    {
-        syslog(LOG_ERR,"signal block failed\n");
-        exit(-1);
-    }
-   
-   
-   write_bytes = write(file_fd,buf,size);  //write timestamp to file 
-    
-   if (write_bytes == -1){
-        
-        syslog(LOG_ERR,"write failed\n");
-        exit(-1);
-    }
-    
-   
-    
-    // Unblock signals to avoid partial write
-    if (sigprocmask(SIG_UNBLOCK,&mask,NULL) == -1)
-    {
-        syslog(LOG_ERR,"signal unblock failed\n");
-        exit(-1);
-    }
-
-    
-   //unlock mutex 
-   pthread_mutex_unlock(&file_mutex);
-    
-   
-
-   
-   
-}
 
 //frees memory ,closes files and frees linked list 
 
 void free_memory()
 {
-   //close server socket
-   if(close(socket_fd)<0)
-    {
+  
+  
+  //close server socket
+  if(close(socket_fd)<0)
+  {
       syslog(LOG_ERR,"Cannot close server socket file descriptor\n");
-    }
+  }
     
-  //remove file 
-  if(remove(FILE_PATH)<0)
+  #ifndef CHAR_DEVICE
+  
+    //remove file 
+    if(remove(FILE_PATH)<0)
     {
       syslog(LOG_ERR,"Cannot remove file\n");
     }
+    
+  #endif
     
   // Cancel threads, free assicociated pointers
   SLIST_FOREACH(datap,&head,entries)
@@ -170,8 +124,7 @@ void free_memory()
 
    }
     
-  //delete timer
-  timer_delete(timer_id);
+
     
   // free Linked list
   while(!SLIST_EMPTY(&head))
@@ -206,15 +159,6 @@ void sig_handler(int signo)
     {
       syslog(LOG_ERR,"Cannot close server socket file descriptor\n");
     }
-    
-    
-    
-    if(remove(FILE_PATH)<0)
-    {
-      syslog(LOG_ERR,"Cannot remove file\n");
-    }
-    
-   
     
   }
 
@@ -316,11 +260,13 @@ void packet_transfer(void *threadp)
 
     //mutex unlock
     pthread_mutex_unlock(&file_mutex);
-
-
+  
+    
+    
+    
     //point to begining of file 
     lseek(file_fd,0,SEEK_SET);
-
+    
    
 
     // Block signals to avoid partial read from file 
@@ -421,8 +367,8 @@ int main(int argc, char *argv[])
    client_addr_size = sizeof(struct sockaddr_in);
    char *client_ip;
    //timer_t timer_id;
-   struct itimerspec result;
-   int ret=0;
+   //truct itimerspec result;
+   //int ret=0;
    int pid=0;
    
    SLIST_INIT(&head); //initialize linked list 
@@ -508,15 +454,18 @@ int main(int argc, char *argv[])
    }
     
     
-    
-   file_fd = open(FILE_PATH,O_RDWR | O_APPEND | O_CREAT,FILE_PERMISSIONS); //open file 
+   //#ifndef CHAR_DEVICE
+     
+     file_fd = open(FILE_PATH,O_RDWR | O_TRUNC | O_CREAT,FILE_PERMISSIONS); //open file 
    
-   if(file_fd==-1)
-   {
+     if(file_fd==-1)
+     {
       syslog(LOG_ERR,"Cannot open file\n");
       return rc;
      
-   }
+     }
+     
+ // #endif
    
    if(isdaemon==1)
     {  
@@ -571,42 +520,20 @@ int main(int argc, char *argv[])
     
    //setting up call to timer_thread function 
      
-   result.it_interval.tv_sec = TIMER_INTERVAL_S;
-   result.it_interval.tv_nsec =TIMER_INTERVAL_NS;
-   result.it_value.tv_sec = TIMER_INTERVAL_S ;
-   result.it_value.tv_nsec = TIMER_INTERVAL_NS;
    
    
-   struct sigevent sev;
    
-   int clock_id = CLOCK_MONOTONIC; //use relative time 
+   //struct sigevent sev;
    
-   memset(&sev,0,sizeof(struct sigevent));
+   //int clock_id = CLOCK_MONOTONIC; //use relative time 
    
-   sev.sigev_notify = SIGEV_THREAD;
-   sev.sigev_value.sival_ptr= &timer_id;
-   sev.sigev_notify_function = timer_thread;
-   sev.sigev_notify_attributes = NULL;
+  // sev.sigev_notify = SIGEV_THREAD;
+   //sev.sigev_value.sival_ptr= &timer_id;
+   //sev.sigev_notify_function = timer_thread;
+  // sev.sigev_notify_attributes = NULL;
    
-   ret = timer_create(clock_id,&sev,&timer_id); //create timer
+   //ret = timer_create(clock_id,&sev,&timer_id); //create timer
    
-   if(ret !=0)
-   {
-      syslog(LOG_ERR,"Cannot create timer!\n");
-      printf("Cannot create timer!");
-      return rc;
-   }
-   
-   
-   ret = timer_settime(timer_id,0,&result, NULL); //set timer 
-   
-   if(ret==-1)
-   {
-     syslog(LOG_ERR,"Error in setting timer!\n");
-     printf("error in setting timer!");
-     return rc;
-   
-   }
    
     
    while(terminate!=1)
