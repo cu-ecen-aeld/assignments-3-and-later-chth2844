@@ -27,14 +27,14 @@
 #include <time.h>
 #include "queue.h"
 
-#define CHAR_DEVICE 1
+#define USE_AESD_CHAR_DEVICE 1
 
 //#defines
 #define PORT_NO "9000"
 #define SOCKET_PROTOCOL 0
 #define LISTEN_BACKLOG 5
 #define BUFFER_LEN 1000
-#ifdef CHAR_DEVICE
+#ifdef USE_AESD_CHAR_DEVICE
        #define  FILE_PATH "/dev/aesdchar"
 #else
        
@@ -94,7 +94,7 @@ void free_memory()
       syslog(LOG_ERR,"Cannot close server socket file descriptor\n");
   }
     
-  #ifndef CHAR_DEVICE
+  #ifndef USE_AESD_CHAR_DEVICE
   
     //remove file 
     if(remove(FILE_PATH)<0)
@@ -453,8 +453,6 @@ int main(int argc, char *argv[])
       return rc;
    }
     
-    
-   //#ifndef CHAR_DEVICE
      
      file_fd = open(FILE_PATH,O_RDWR | O_TRUNC | O_CREAT,FILE_PERMISSIONS); //open file 
    
@@ -465,7 +463,6 @@ int main(int argc, char *argv[])
      
      }
      
- // #endif
    
    if(isdaemon==1)
     {  
