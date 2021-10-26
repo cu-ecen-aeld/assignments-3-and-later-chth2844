@@ -78,7 +78,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 	
 	if(retval < 0)
 	{
-	  
+	  retval = -ERESTARTSYS;
 	  return retval;
 	}
 	
@@ -91,21 +91,11 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 	  return 0;
 	}
 	
-	else 
+	bytes_read = read_entry->size - read_offset;
 	
+	if(count < bytes_read)
 	{
-	  if((read_offset+count) <=read_entry->size)
-	  {
-	    bytes_read = count;
-	  }
-	  
-	  else
-	  {
-	  
-	  bytes_read =  read_entry->size - read_offset;
-	  
-	  }
-	
+	   bytes_read = count;
 	}
 	
 	retval = copy_to_user(buf, (read_entry->buffptr + read_offset),bytes_read);

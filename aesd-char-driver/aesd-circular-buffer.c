@@ -157,7 +157,7 @@ void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer)
 /**
 * releases memory for each element in circular @param buffer 
 */
-void aesd_circular_buffer_release(struct aesd_circular_buffer *buffer)
+extern void aesd_circular_buffer_release(struct aesd_circular_buffer *buffer)
 {
 	
 	struct aesd_buffer_entry *element;
@@ -172,14 +172,17 @@ void aesd_circular_buffer_release(struct aesd_circular_buffer *buffer)
 
 #ifndef __KERNEL__
 		
-		free(element->buffptr);	
+		free((void*)element->buffptr);	
 #else
 		kfree(element->buffptr);
-		}
+		
+		
 #endif
+         }
 
 	}
 	
-    buffer->in_offs =0 ;
-    buffer->out_offs=0;
-}
+    //buffer->in_offs =0;
+    //buffer->out_offs=0;
+ }
+
