@@ -193,6 +193,15 @@ void packet_transfer(void *threadp)
     
     int read_offset=0;
     
+    file_fd = open(FILE_PATH,O_RDWR | O_TRUNC | O_CREAT,FILE_PERMISSIONS); //open file 
+   
+     if(file_fd==-1)
+     {
+      syslog(LOG_ERR,"Cannot open file\n");
+      exit(-1);
+     
+     }
+    
     //dynamically allocate memory to read and write buffer
     threadsock->read_buff = (char*)malloc(sizeof(char)*BUFFER_LEN);
     threadsock->write_buff = (char*)malloc(sizeof(char)*BUFFER_LEN);
@@ -453,15 +462,6 @@ int main(int argc, char *argv[])
       return rc;
    }
     
-     
-     file_fd = open(FILE_PATH,O_RDWR | O_TRUNC | O_CREAT,FILE_PERMISSIONS); //open file 
-   
-     if(file_fd==-1)
-     {
-      syslog(LOG_ERR,"Cannot open file\n");
-      return rc;
-     
-     }
      
    
    if(isdaemon==1)
