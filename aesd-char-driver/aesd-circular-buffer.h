@@ -14,6 +14,7 @@
 #include <stddef.h> // size_t
 #include <stdint.h> // uintx_t
 #include <stdbool.h>
+#include <stdlib.h>
 #endif
 
 #define AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED 10
@@ -54,9 +55,11 @@ struct aesd_circular_buffer
 extern struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
 			size_t char_offset, size_t *entry_offset_byte_rtn );
 
-extern void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry);
+extern const char *aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry);
 
 extern void aesd_circular_buffer_init(struct aesd_circular_buffer *buffer);
+
+extern void aesd_circular_buffer_release(struct aesd_circular_buffer *buffer);
 
 /**
  * Create a for loop to iterate over each member of the circular buffer.
